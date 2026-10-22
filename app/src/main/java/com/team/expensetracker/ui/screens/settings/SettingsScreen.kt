@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import com.team.expensetracker.ui.theme.AccentMint
 import com.team.expensetracker.ui.theme.BackgroundDark
 import com.team.expensetracker.ui.theme.BorderDark
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.team.expensetracker.ui.theme.DebitRed
 import com.team.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.team.expensetracker.ui.theme.SurfaceDark
@@ -64,6 +66,32 @@ import com.team.expensetracker.ui.theme.SurfaceVariantDark
 import com.team.expensetracker.ui.theme.TextPrimary
 import com.team.expensetracker.ui.theme.TextSecondary
 import com.team.expensetracker.ui.theme.TextTertiary
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.SettingsViewModel
+
+/**
+ * ViewModel-backed entry point for SettingsScreen connecting to [SettingsViewModel].
+ */
+@Composable
+fun SettingsScreen(
+    onNavigateToMyUpiIds: () -> Unit,
+    onNavigateToPermissionExplainer: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: SettingsViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current))
+) {
+    SettingsScreen(
+        onNavigateToMyUpiIds = onNavigateToMyUpiIds,
+        onNavigateToPermissionExplainer = onNavigateToPermissionExplainer,
+        onDeleteAllData = {
+            viewModel.deleteAllData {
+                onBack()
+            }
+        },
+        onBack = onBack,
+        modifier = modifier
+    )
+}
 
 /**
  * SettingsScreen provides transparency regarding data access, links to "My UPI IDs",

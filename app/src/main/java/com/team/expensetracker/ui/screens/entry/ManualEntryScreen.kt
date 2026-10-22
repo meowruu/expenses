@@ -58,7 +58,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.team.expensetracker.data.FakeData
+import com.team.expensetracker.parser.Categories
 import com.team.expensetracker.ui.theme.ExpenseTrackerTheme
 import com.team.expensetracker.ui.theme.AccentMint
 import com.team.expensetracker.ui.theme.BackgroundDark
@@ -72,8 +75,40 @@ import com.team.expensetracker.ui.theme.TextPrimary
 import com.team.expensetracker.ui.theme.TextSecondary
 import com.team.expensetracker.ui.theme.TextTertiary
 import java.text.SimpleDateFormat
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.ManualEntryViewModel
 import java.util.Date
 import java.util.Locale
+
+/**
+ * ViewModel-backed entry point for ManualEntryScreen connecting to [ManualEntryViewModel].
+ */
+@Composable
+fun ManualEntryScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: ManualEntryViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current)),
+    categories: List<String> = Categories.ALL.toList()
+) {
+    ManualEntryScreen(
+        categories = categories,
+        onSave = { amountPaise, note, category, dateMillis, upiId ->
+            viewModel.addExpense(
+                amountPaise = amountPaise,
+                note = note,
+                category = category,
+                date = dateMillis,
+                upiId = upiId
+            ) { success ->
+                if (success) {
+                    onBack()
+                }
+            }
+        },
+        onBack = onBack,
+        modifier = modifier
+    )
+}
 
 /**
  * ManualEntryScreen allows logging an expense manually.

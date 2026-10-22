@@ -1,19 +1,21 @@
 package com.team.expensetracker.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.team.expensetracker.data.FakeData
-import com.team.expensetracker.data.model.Transaction
+import com.team.expensetracker.data.CategorySummary
 import com.team.expensetracker.data.model.TransactionType
+import com.team.expensetracker.parser.Categories
 import com.team.expensetracker.ui.screens.detail.TransactionDetailScreen
 import com.team.expensetracker.ui.screens.entry.ManualEntryScreen
 import com.team.expensetracker.ui.screens.home.HomeScreen
@@ -21,43 +23,52 @@ import com.team.expensetracker.ui.screens.lock.LockScreen
 import com.team.expensetracker.ui.screens.settings.MyUpiIdsScreen
 import com.team.expensetracker.ui.screens.settings.PermissionExplainerScreen
 import com.team.expensetracker.ui.screens.settings.SettingsScreen
-import java.util.concurrent.atomic.AtomicLong
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.HomeViewModel
+import com.team.expensetracker.ui.viewmodel.ManualEntryViewModel
+import com.team.expensetracker.ui.viewmodel.MyUpiIdsViewModel
+import com.team.expensetracker.ui.viewmodel.SettingsViewModel
+import com.team.expensetracker.ui.viewmodel.TransactionDetailViewModel
 
 /**
  * Root navigation host managing screen navigation across Home, Manual Entry,
- * Transaction Detail, Settings, and My UPI IDs.
+ * Transaction Detail, Settings, My UPI IDs, and Permission Explainer.
  *
- * Implements pure state hoisting: screens take plain data + lambdas, zero ViewModel coupling.
+ * Connects B2 ViewModels via [ExpenseViewModelFactory] and feeds reactive state
+ * into the screens while maintaining state hoisting.
  */
 @Composable
 fun AppNavHost(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
-    val idCounter = remember { AtomicLong(100L) }
+    val context = LocalContext.current
+    val viewModelFactory = remember(context) { ExpenseViewModelFactory.create(context) }
 
-    // In-memory transaction state initialized with FakeData
-    val transactions = remember {
-        mutableStateListOf<Transaction>().apply {
-            addAll(FakeData.initialTransactions)
-        }
+    val homeViewModel: HomeViewModel = viewModel(factory = viewModelFactory)
+    val manualEntryViewModel: ManualEntryViewModel = viewModel(factory = viewModelFactory)
+    val transactionDetailViewModel: TransactionDetailViewModel = viewModel(factory = viewModelFactory)
+    val myUpiIdsViewModel: MyUpiIdsViewModel = viewModel(factory = viewModelFactory)
+    val settingsViewModel: SettingsViewModel = viewModel(factory = viewModelFactory)
+
+    val transactions by homeViewModel.transactions.collectAsState()
+    val monthTotalPaise by homeViewModel.monthTotalPaise.collectAsState()
+    val categorySummary by homeViewModel.categorySummary.collectAsState()
+    val myUpiIdEntities by myUpiIdsViewModel.upiIds.collectAsState()
+
+    val categorySummaries = remember(categorySummary, transactions) {
+        categorySummary.entries.map { (category, totalPaise) ->
+            CategorySummary(
+                category = category,
+                totalPaise = totalPaise,
+                transactionCount = transactions.count { it.category == category && it.type == TransactionType.DEBIT }
+            )
+        }.sortedByDescending { it.totalPaise }
     }
 
-    // In-memory list of user-owned UPI IDs
-    val myUpiIds = remember {
-        mutableStateListOf("user@okhdfcbank", "user@axisbank")
-    }
-
-    val thisMonthSpentPaise = remember(transactions.toList()) {
-        FakeData.calculateTotalSpent(transactions)
-    }
-
-    val categoryTotals = remember(transactions.toList()) {
-        FakeData.calculateCategoryTotals(transactions)
-    }
-
-    val categorySummaries = remember(transactions.toList()) {
-        FakeData.calculateCategorySummaries(transactions)
+    // Placeholder function for Simulate SMS
+    fun onSimulateSms() {
+        // TODO: B3 will wire the real pipeline
     }
 
     NavHost(
@@ -65,27 +76,28 @@ fun AppNavHost(
         startDestination = Route.Home.route,
         modifier = modifier
     ) {
-// Lock Screen
-composable(route = Route.Lock.route) {
-    LockScreen(
-        onPinComplete = { _ ->
-            // B4: Replace this stub with real PIN verification
-            navController.navigate(Route.Home.route) {
-                popUpTo(Route.Lock.route) { inclusive = true }
-            }
-        },
-        onBiometricClick = {
-            // B4: Connect real biometric authentication here
+        // Lock Screen
+        composable(route = Route.Lock.route) {
+            LockScreen(
+                onPinComplete = { _ ->
+                    // B4: Replace this stub with real PIN verification
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(Route.Lock.route) { inclusive = true }
+                    }
+                },
+                onBiometricClick = {
+                    // B4: Connect real biometric authentication here
+                }
+            )
         }
-    )
-}
+
         // 1. Home Dashboard Screen
         composable(route = Route.Home.route) {
             HomeScreen(
-                thisMonthSpentPaise = thisMonthSpentPaise,
-                categoryTotals = categoryTotals,
+                thisMonthSpentPaise = monthTotalPaise,
+                categoryTotals = categorySummary,
                 categorySummaries = categorySummaries,
-                recentTransactions = transactions.toList(),
+                recentTransactions = transactions,
                 onTransactionClick = { transactionId ->
                     navController.navigate(Route.TransactionDetail.createRoute(transactionId))
                 },
@@ -95,8 +107,8 @@ composable(route = Route.Lock.route) {
                 onSettingsClick = {
                     navController.navigate(Route.Settings.route)
                 },
-                onSimulateSms = { _ ->
-                    // Stub for B3 integration
+                onSimulateSms = {
+                    onSimulateSms()
                 }
             )
         }
@@ -104,21 +116,19 @@ composable(route = Route.Lock.route) {
         // 2. Manual Expense Entry Screen
         composable(route = Route.ManualEntry.route) {
             ManualEntryScreen(
-                categories = FakeData.CATEGORIES,
+                categories = Categories.ALL.toList(),
                 onSave = { amountPaise, note, category, dateMillis, upiId ->
-                    val newTransaction = Transaction(
-                        id = idCounter.incrementAndGet(),
+                    manualEntryViewModel.addExpense(
                         amountPaise = amountPaise,
-                        type = TransactionType.DEBIT,
-                        merchant = note,
-                        upiId = upiId,
-                        refNumber = "MANUAL/${System.currentTimeMillis().toString().takeLast(8)}",
+                        note = note,
+                        category = category,
                         date = dateMillis,
-                        bank = "CASH/UPI",
-                        category = category
-                    )
-                    transactions.add(0, newTransaction)
-                    navController.popBackStack()
+                        upiId = upiId
+                    ) { success ->
+                        if (success) {
+                            navController.popBackStack()
+                        }
+                    }
                 },
                 onBack = {
                     navController.popBackStack()
@@ -136,15 +146,19 @@ composable(route = Route.Lock.route) {
             )
         ) { backStackEntry ->
             val transactionId = backStackEntry.arguments?.getLong(Route.TransactionDetail.ARG_TRANSACTION_ID) ?: 0L
-            val transactionIndex = transactions.indexOfFirst { it.id == transactionId }
+            val transaction = transactions.firstOrNull { it.id == transactionId }
 
-            if (transactionIndex != -1) {
-                val transaction = transactions[transactionIndex]
+            if (transaction != null) {
                 TransactionDetailScreen(
                     transaction = transaction,
-                    categories = FakeData.CATEGORIES,
+                    categories = Categories.ALL.toList(),
                     onCategoryChange = { updatedCategory ->
-                        transactions[transactionIndex] = transaction.copy(category = updatedCategory)
+                        transactionDetailViewModel.updateCategory(
+                            id = transaction.id,
+                            newCategory = updatedCategory,
+                            upiId = transaction.upiId,
+                            saveAsRule = true
+                        )
                     },
                     onBack = {
                         navController.popBackStack()
@@ -163,8 +177,9 @@ composable(route = Route.Lock.route) {
                     navController.navigate(Route.PermissionExplainer.route)
                 },
                 onDeleteAllData = {
-                    transactions.clear()
-                    navController.popBackStack()
+                    settingsViewModel.deleteAllData {
+                        navController.popBackStack()
+                    }
                 },
                 onBack = {
                     navController.popBackStack()
@@ -174,13 +189,14 @@ composable(route = Route.Lock.route) {
 
         // 5. My UPI IDs Management Screen
         composable(route = Route.MyUpiIds.route) {
+            val upiIds = remember(myUpiIdEntities) { myUpiIdEntities.map { it.upiId } }
             MyUpiIdsScreen(
-                upiIds = myUpiIds.toList(),
+                upiIds = upiIds,
                 onAdd = { newUpiId ->
-                    myUpiIds.add(newUpiId)
+                    myUpiIdsViewModel.addUpiId(newUpiId)
                 },
                 onRemove = { upiIdToRemove ->
-                    myUpiIds.remove(upiIdToRemove)
+                    myUpiIdsViewModel.removeUpiId(upiIdToRemove)
                 },
                 onBack = {
                     navController.popBackStack()

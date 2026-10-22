@@ -57,10 +57,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.team.expensetracker.data.FakeData
 import com.team.expensetracker.data.model.Transaction
 import com.team.expensetracker.data.model.TransactionType
+import com.team.expensetracker.parser.Categories
 import com.team.expensetracker.ui.theme.AccentMint
 import com.team.expensetracker.ui.theme.BackgroundDark
 import com.team.expensetracker.ui.theme.BorderDark
@@ -75,6 +79,43 @@ import com.team.expensetracker.ui.theme.TextSecondary
 import com.team.expensetracker.ui.theme.TextTertiary
 import com.team.expensetracker.ui.util.formattedAmount
 import com.team.expensetracker.ui.util.formattedDateTime
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.HomeViewModel
+import com.team.expensetracker.ui.viewmodel.TransactionDetailViewModel
+
+/**
+ * ViewModel-backed entry point for TransactionDetailScreen connecting to
+ * [TransactionDetailViewModel] and [HomeViewModel].
+ */
+@Composable
+fun TransactionDetailScreen(
+    transactionId: Long,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    homeViewModel: HomeViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current)),
+    detailViewModel: TransactionDetailViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current)),
+    categories: List<String> = Categories.ALL.toList()
+) {
+    val transactions by homeViewModel.transactions.collectAsState()
+    val transaction = transactions.firstOrNull { it.id == transactionId }
+
+    if (transaction != null) {
+        TransactionDetailScreen(
+            transaction = transaction,
+            categories = categories,
+            onCategoryChange = { updatedCategory ->
+                detailViewModel.updateCategory(
+                    id = transaction.id,
+                    newCategory = updatedCategory,
+                    upiId = transaction.upiId,
+                    saveAsRule = true
+                )
+            },
+            onBack = onBack,
+            modifier = modifier
+        )
+    }
+}
 
 /**
  * TransactionDetailScreen displays full metadata for a transaction and provides

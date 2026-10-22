@@ -48,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,11 +59,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.team.expensetracker.data.CategorySummary
 import com.team.expensetracker.data.FakeData
 import com.team.expensetracker.data.model.Transaction
@@ -83,6 +86,8 @@ import com.team.expensetracker.ui.theme.TextTertiary
 import com.team.expensetracker.ui.util.formatRupees
 import com.team.expensetracker.ui.util.formattedAmount
 import com.team.expensetracker.ui.util.formattedDateTime
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.HomeViewModel
 
 private const val DEFAULT_SAMPLE_SMS =
     "Sent Rs.450.00 from Axis Bank A/C ending 1234 to SWIGGY on 22-10-26 via UPI. Ref: UPI/429482910394. Not you? SMS BLOCK to 5676782"
@@ -99,6 +104,46 @@ private val CHART_COLORS = listOf(
 )
 
 /**
+ * ViewModel-backed entry point for HomeScreen that connects to [HomeViewModel]
+ * using [ExpenseViewModelFactory].
+ */
+@Composable
+fun HomeScreen(
+    modifier: Modifier = Modifier,
+    viewModel: HomeViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current)),
+    onTransactionClick: (Long) -> Unit,
+    onAddClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onSimulateSms: () -> Unit = {}
+) {
+    val transactions by viewModel.transactions.collectAsState()
+    val monthTotalPaise by viewModel.monthTotalPaise.collectAsState()
+    val categorySummary by viewModel.categorySummary.collectAsState()
+
+    val categorySummaries = remember(categorySummary, transactions) {
+        categorySummary.entries.map { (cat, total) ->
+            CategorySummary(
+                category = cat,
+                totalPaise = total,
+                transactionCount = transactions.count { it.category == cat && it.type == TransactionType.DEBIT }
+            )
+        }.sortedByDescending { it.totalPaise }
+    }
+
+    HomeScreen(
+        thisMonthSpentPaise = monthTotalPaise,
+        categoryTotals = categorySummary,
+        categorySummaries = categorySummaries,
+        recentTransactions = transactions,
+        onTransactionClick = onTransactionClick,
+        onAddClick = onAddClick,
+        onSettingsClick = onSettingsClick,
+        onSimulateSms = onSimulateSms,
+        modifier = modifier
+    )
+}
+
+/**
  * HomeScreen displays this month's total spending, a Compose Canvas category donut chart,
  * category summaries, and a reactive LazyColumn of recent transactions.
  *
@@ -113,11 +158,9 @@ fun HomeScreen(
     onTransactionClick: (Long) -> Unit,
     onAddClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    onSimulateSms: (String) -> Unit,
+    onSimulateSms: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var showSimulateSmsDialog by remember { mutableStateOf(false) }
-
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = BackgroundDark,
@@ -144,10 +187,10 @@ fun HomeScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Top App Bar Header with Simulate and Settings buttons
+            // Top App Bar Header with Simulate SMS and Settings buttons
             item {
                 HomeHeader(
-                    onSimulateClick = { showSimulateSmsDialog = true },
+                    onSimulateSms = onSimulateSms,
                     onSettingsClick = onSettingsClick
                 )
             }
@@ -208,22 +251,11 @@ fun HomeScreen(
             }
         }
     }
-
-    // Simulate SMS Modal Dialog
-    if (showSimulateSmsDialog) {
-        SimulateSmsDialog(
-            onDismiss = { showSimulateSmsDialog = false },
-            onSend = { smsBody ->
-                showSimulateSmsDialog = false
-                onSimulateSms(smsBody)
-            }
-        )
-    }
 }
 
 @Composable
 private fun HomeHeader(
-    onSimulateClick: () -> Unit,
+    onSimulateSms: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
     Row(
@@ -265,7 +297,7 @@ private fun HomeHeader(
         ) {
             // Simulate SMS Button
             OutlinedButton(
-                onClick = onSimulateClick,
+                onClick = onSimulateSms,
                 shape = RoundedCornerShape(12.dp),
                 border = androidx.compose.foundation.BorderStroke(1.dp, BorderDark),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
@@ -273,13 +305,13 @@ private fun HomeHeader(
             ) {
                 Icon(
                     imageVector = Icons.Rounded.ChatBubbleOutline,
-                    contentDescription = null,
+                    contentDescription = "Simulate SMS",
                     tint = AccentMint,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "Simulate",
+                    text = "Simulate SMS",
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                 )
             }

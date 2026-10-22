@@ -47,7 +47,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.team.expensetracker.ui.theme.AccentMint
 import com.team.expensetracker.ui.theme.BackgroundDark
 import com.team.expensetracker.ui.theme.BorderDark
@@ -59,8 +62,30 @@ import com.team.expensetracker.ui.theme.SurfaceVariantDark
 import com.team.expensetracker.ui.theme.TextPrimary
 import com.team.expensetracker.ui.theme.TextSecondary
 import com.team.expensetracker.ui.theme.TextTertiary
+import com.team.expensetracker.ui.viewmodel.ExpenseViewModelFactory
+import com.team.expensetracker.ui.viewmodel.MyUpiIdsViewModel
 
 private val UPI_REGEX = Regex("^[a-zA-Z0-9.\\-_]{2,256}@[a-zA-Z]{2,64}$")
+
+/**
+ * ViewModel-backed entry point for MyUpiIdsScreen connecting to [MyUpiIdsViewModel].
+ */
+@Composable
+fun MyUpiIdsScreen(
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    viewModel: MyUpiIdsViewModel = viewModel(factory = ExpenseViewModelFactory.create(LocalContext.current))
+) {
+    val upiEntities by viewModel.upiIds.collectAsState()
+    val upiIds = remember(upiEntities) { upiEntities.map { it.upiId } }
+    MyUpiIdsScreen(
+        upiIds = upiIds,
+        onAdd = { viewModel.addUpiId(it) },
+        onRemove = { viewModel.removeUpiId(it) },
+        onBack = onBack,
+        modifier = modifier
+    )
+}
 
 /**
  * MyUpiIdsScreen allows managing user-owned UPI IDs to exclude self-transfers from spending totals.
