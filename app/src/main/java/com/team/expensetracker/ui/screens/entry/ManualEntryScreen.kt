@@ -1,5 +1,6 @@
 package com.team.expensetracker.ui.screens.entry
 
+import java.math.BigDecimal
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -402,11 +403,13 @@ fun ManualEntryScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            val isFormValid = parseRupeesToPaise(amountInput) != null && noteInput.trim().isNotEmpty()
+
             // Save Button
             Button(
                 onClick = {
-                    val amountDouble = amountInput.toDoubleOrNull()
-                    if (amountDouble == null || amountDouble <= 0.0) {
+                    val amountPaise = parseRupeesToPaise(amountInput)
+                    if (amountPaise == null || amountPaise <= 0L) {
                         errorMessage = "Amount must be greater than ₹0.00"
                         return@Button
                     }
@@ -415,7 +418,6 @@ fun ManualEntryScreen(
                         return@Button
                     }
 
-                    val amountPaise = (amountDouble * 100).toLong()
                     val cleanUpi = upiIdInput.trim().ifEmpty { null }
 
                     onSave(
@@ -426,6 +428,7 @@ fun ManualEntryScreen(
                         cleanUpi
                     )
                 },
+                enabled = isFormValid,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp),
@@ -481,5 +484,37 @@ fun ManualEntryScreenPreview() {
             onSave = { _, _, _, _, _ -> },
             onBack = {}
         )
+    }
+}
+
+/**
+ * Safely converts a rupee amount string to paise using exact decimal math.
+ * Rejects invalid strings, amounts <= 0, amounts with more than 2 decimal places,
+ * and amounts that exceed [Long.MAX_VALUE] in paise.
+ */
+internal fun parseRupeesToPaise(input: String): Long? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return null
+
+    // Support up to two decimal places; reject scientific notation or extra decimal places
+    if (!trimmed.matches(Regex("^\\d+(\\.\\d{1,2})?$|^\\.\\d{1,2}$|^\\d+\\.$"))) {
+        return null
+    }
+
+    val withoutTrailingDot = if (trimmed.endsWith(".")) trimmed.dropLast(1) else trimmed
+    if (withoutTrailingDot.isEmpty()) return null
+
+    val normalized = if (withoutTrailingDot.startsWith(".")) "0$withoutTrailingDot" else withoutTrailingDot
+
+    return try {
+        val bd = BigDecimal(normalized)
+        if (bd.signum() <= 0) return null
+        if (bd.scale() > 2) return null
+        val paiseBd = bd.movePointRight(2)
+        if (paiseBd > BigDecimal.valueOf(Long.MAX_VALUE)) return null
+        val paise = paiseBd.longValueExact()
+        if (paise <= 0L) null else paise
+    } catch (_: Exception) {
+        null
     }
 }
