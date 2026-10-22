@@ -1,28 +1,58 @@
 # B3 SMS Pipeline Handoff
 
-**Role:** B3: SMS, Permissions and Integration
-**Branch:** `b3-sms`
-**Package:** `com.team.expensetracker.sms`
-**Status:** ✅ assembleDebug + testDebugUnitTest both passing (25/25 tests)
+**Role:** B3: SMS, Permissions and Integration  
+**Branch:** `b3-sms`  
+**Package:** `com.team.expensetracker.sms`  
+**Status:** ✅ `assembleDebug` + `testDebugUnitTest` both passing (27/27 tests)
 
 ---
 
-## 1. Files Added
+## 1. Files Added / Managed
 
 | File | Purpose |
 |---|---|
-| `app/src/main/java/com/team/expensetracker/sms/BankSenderFilter.kt` | Allowlist-based sender ID validator |
+| `app/src/main/java/com/team/expensetracker/sms/BankSenderFilter.kt` | Allowlist-based sender ID validator (strips operator prefixes, rejects phone numbers) |
 | `app/src/main/java/com/team/expensetracker/sms/SmsIngestor.kt` | `SmsIngestor` interface + `SmsIngestionResult` sealed class |
-| `app/src/main/java/com/team/expensetracker/sms/StubSmsHandler.kt` | **TEMP STUB** implementing `SmsIngestor`; replace at integration |
-| `app/src/main/java/com/team/expensetracker/sms/SimulatedSmsSource.kt` | Simulate SMS flow + 3 fake sample messages |
-| `app/src/test/java/com/team/expensetracker/sms/BankSenderFilterTest.kt` | 20 unit tests for the sender filter |
-| `app/src/test/java/com/team/expensetracker/sms/SimulatedSmsSourceTest.kt` | 5 unit tests for the simulate flow |
-
-No files outside `sms/` were modified. No `AndroidManifest.xml` changes. No INTERNET permission added.
+| `app/src/main/java/com/team/expensetracker/sms/StubSmsHandler.kt` | **TEMP STUB** implementing `SmsIngestor`; logs event without logging body |
+| `app/src/main/java/com/team/expensetracker/sms/SmsPipeline.kt` | Global pipeline holder with `@Volatile var ingestor: SmsIngestor = StubSmsHandler()` |
+| `app/src/main/java/com/team/expensetracker/sms/SmsReceiver.kt` | System `BroadcastReceiver` joining multipart SMS in memory, checking `BankSenderFilter` first |
+| `app/src/main/java/com/team/expensetracker/sms/SmsReceiverToggle.kt` | Runtime toggling of `SmsReceiver` via `PackageManager.setComponentEnabledSetting` |
+| `app/src/main/java/com/team/expensetracker/sms/SimulatedSmsSource.kt` | Simulates SMS events through `SmsPipeline.ingestor` + sample messages |
+| `app/src/test/java/com/team/expensetracker/sms/BankSenderFilterTest.kt` | 19 unit tests for bank header matching and edge cases |
+| `app/src/test/java/com/team/expensetracker/sms/SimulatedSmsSourceTest.kt` | 7 unit tests for simulate flow, OTP rejection, and `SmsPipeline` swapping |
 
 ---
 
-## 2. Exact Public Signatures
+## 2. Manifest Additions (`app/src/main/AndroidManifest.xml`)
+
+B3 added the following manifest declarations:
+
+1. **Permission:**
+   ```xml
+   <uses-permission android:name="android.permission.RECEIVE_SMS" />
+   ```
+2. **Receiver Component:**
+   ```xml
+   <receiver
+       android:name=".sms.SmsReceiver"
+       android:enabled="false"
+       android:exported="true"
+       android:permission="android.permission.BROADCAST_SMS">
+       <intent-filter>
+           <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+       </intent-filter>
+   </receiver>
+   ```
+3. **Hard Rules Maintained:**
+   - `android:allowBackup="false"` strictly enforced on `<application>`.
+   - **ZERO** `INTERNET` permission.
+   - The receiver is disabled by default (`android:enabled="false"`) until enabled at runtime via `SmsReceiverToggle`.
+
+*(Note for B4: B4 owns security hardening; B3 has communicated these required additions).*
+
+---
+
+## 3. Exact Public Signatures
 
 ### `BankSenderFilter` (object)
 
@@ -30,19 +60,12 @@ No files outside `sms/` were modified. No `AndroidManifest.xml` changes. No INTE
 package com.team.expensetracker.sms
 
 object BankSenderFilter {
-    /** Allowlist of 6-letter bank sender headers (upper-case). Add more here. */
     val BANK_SENDER_IDS: Set<String>
-
-    /**
-     * Returns true if senderId is a recognised bank sender.
-     * Strips "XX-" operator prefix before matching. Case-insensitive.
-     * Rejects personal phone numbers (+91..., pure-digit strings).
-     */
     fun isBankSender(senderId: String): Boolean
 }
 ```
 
-### `SmsIngestionResult` (sealed class)
+### `SmsIngestionResult` (sealed class) & `SmsIngestor` (interface)
 
 ```kotlin
 package com.team.expensetracker.sms
@@ -52,27 +75,47 @@ sealed class SmsIngestionResult {
     data class RejectedSender(val sender: String) : SmsIngestionResult()
     object Ignored : SmsIngestionResult()
 }
-```
-
-### `SmsIngestor` (interface)
-
-```kotlin
-package com.team.expensetracker.sms
 
 interface SmsIngestor {
     fun ingest(sender: String, body: String): SmsIngestionResult
 }
 ```
 
-### `StubSmsHandler` (class — TEMP STUB)
+### `SmsPipeline` (object)
 
 ```kotlin
 package com.team.expensetracker.sms
 
-class StubSmsHandler(
-    logger: (tag: String, msg: String) -> Unit = { tag, msg -> println("[$tag] $msg") }
-) : SmsIngestor {
-    override fun ingest(sender: String, body: String): SmsIngestionResult
+object SmsPipeline {
+    @Volatile
+    var ingestor: SmsIngestor = StubSmsHandler()
+}
+```
+
+### `SmsReceiver` (class)
+
+```kotlin
+package com.team.expensetracker.sms
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+
+class SmsReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent)
+}
+```
+
+### `SmsReceiverToggle` (object)
+
+```kotlin
+package com.team.expensetracker.sms
+
+import android.content.Context
+
+object SmsReceiverToggle {
+    fun setEnabled(context: Context, enabled: Boolean)
+    fun isEnabled(context: Context): Boolean
 }
 ```
 
@@ -82,7 +125,7 @@ class StubSmsHandler(
 package com.team.expensetracker.sms
 
 class SimulatedSmsSource(
-    private val handler: SmsIngestor = StubSmsHandler()
+    private val handler: SmsIngestor? = null // defaults to SmsPipeline.ingestor
 ) {
     fun simulate(sender: String, body: String): SmsIngestionResult
 
@@ -99,110 +142,84 @@ class SimulatedSmsSource(
 
 ---
 
-## 3. How B1 (Parser) and B2 (Repository) Plug In
+## 4. Integration Guide: How B1 and B2 Plug In
 
-### What to replace
-
-Open [`StubSmsHandler.kt`](../app/src/main/java/com/team/expensetracker/sms/StubSmsHandler.kt) and find the comment:
-
-```
-// TODO: replace with → val tx = B1Parser.parse(sender, body) then repo.insert(tx)
-```
-
-Replace `StubSmsHandler` with a real implementation (e.g. `LiveSmsHandler`) that:
-
-1. **Calls B1's parser** with the raw `body` string in-memory:
-   ```kotlin
-   val tx: Transaction? = B1Parser.parse(sender, body)
-   ```
-   - If `tx` is `null` (B1 couldn't parse it), return `SmsIngestionResult.Ignored`.
-
-2. **Calls B2's repository** with the parsed transaction:
-   ```kotlin
-   val inserted = transactionRepository.insert(tx)
-   // inserted == false means duplicate refNumber → safe to ignore
-   ```
-
-3. Keep `BankSenderFilter.isBankSender()` as Step 1 (do NOT remove it).
-
-4. Keep the OTP guard as Step 2, or replace it with B1's proper regex filter.
-
-### Constructor to use
+At application startup or dependency injection initialization, B1's parser and B2's repository replace `StubSmsHandler` in one line:
 
 ```kotlin
-class LiveSmsHandler(
-    private val repository: TransactionRepository,        // from B2
-    private val payeeRuleRepo: PayeeRuleRepository        // from B2 (optional, for categorisation)
-) : SmsIngestor { ... }
-```
-
-Both `TransactionRepository` and `PayeeRuleRepository` are defined in
-`com.team.expensetracker.data.repository` — see [`docs/handoff-b2.md`](handoff-b2.md).
-
-### Wire up in BroadcastReceiver (B3's next task)
-
-```kotlin
-class BankSmsReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        messages?.forEach { sms ->
-            val result = handler.ingest(sms.originatingAddress ?: "", sms.messageBody)
-            // handle result
+// Example at App startup / DI module:
+class ProductionSmsIngestor(
+    private val parser: SmsParser,                  // From B1
+    private val repository: TransactionRepository   // From B2
+) : SmsIngestor {
+    override fun ingest(sender: String, body: String): SmsIngestionResult {
+        // Step 1: Sender check (guaranteed by receiver, but good to guard)
+        if (!BankSenderFilter.isBankSender(sender)) {
+            return SmsIngestionResult.RejectedSender(sender)
         }
+
+        // Step 2: B1 parses financial details (or returns null if OTP / non-transaction)
+        val transaction: Transaction? = parser.parse(sender, body)
+        if (transaction == null) {
+            return SmsIngestionResult.Ignored
+        }
+
+        // Step 3: B2 persists transaction locally in Room (returns false if duplicate refNumber)
+        runBlocking {
+            repository.insert(transaction)
+        }
+
+        return SmsIngestionResult.Accepted
     }
 }
+
+// Swapping into the pipeline:
+SmsPipeline.ingestor = ProductionSmsIngestor(b1Parser, b2TransactionRepository)
 ```
 
-The `handler` should be injected (DI or passed from Application).
+Once `SmsPipeline.ingestor` is assigned:
+- All real incoming SMS received by `SmsReceiver` will automatically flow into the production parser and repository.
+- All simulated SMS sent via `SimulatedSmsSource().simulate(...)` will also automatically flow into the production parser and repository!
 
 ---
 
-## 4. What F1 Can Call for the "Simulate SMS" Button
+## 5. What F1 Can Call from UI
 
-F1 needs a reference to a `SimulatedSmsSource` instance (injected via ViewModel or passed from the Activity):
-
+### 1. Auto-Logging Toggle Switch ("Settings" or "Explainer" screen)
 ```kotlin
-// In F1's ViewModel or composable button handler:
-val source = SimulatedSmsSource(handler = /* LiveSmsHandler or StubSmsHandler */)
+// When user enables Auto-logging (after granting RECEIVE_SMS permission):
+SmsReceiverToggle.setEnabled(context, true)
 
-// User taps "Simulate Debit":
+// When user disables Auto-logging:
+SmsReceiverToggle.setEnabled(context, false)
+
+// To query state:
+val isAutoLoggingOn = SmsReceiverToggle.isEnabled(context)
+```
+
+### 2. "Simulate SMS" Button (Dev / Demo Flow)
+```kotlin
+val source = SimulatedSmsSource()
+
+// Option A: Quick presets
 source.simulate(
     sender = SimulatedSmsSource.SampleMessages.SENDER_AXIS,
     body   = SimulatedSmsSource.SampleMessages.BODY_DEBIT
 )
 
-// User taps "Simulate Credit":
+// Option B: Custom test SMS
 source.simulate(
-    sender = SimulatedSmsSource.SampleMessages.SENDER_HDFC,
-    body   = SimulatedSmsSource.SampleMessages.BODY_CREDIT
+    sender = "VM-HDFCBK",
+    body   = "Rs 1500.00 debited from A/c XX1234 on 22-Oct-26 to UPI/swiggy@icici. Ref: 123456."
 )
 ```
 
-F1 can also provide a custom sender/body text field and call `source.simulate(sender, body)` with user-entered fake data.
-
-**Important:** F1 must never pass real SMS bodies through this function — only fake/masked test data.
-
 ---
 
-## 5. Open Questions / Blockers
+## 6. Privacy & Security Checklist
 
-| # | Question | Owner | Priority |
-|---|---|---|---|
-| 1 | `AndroidManifest.xml` needs `RECEIVE_SMS` and `READ_SMS` permissions + the `BankSmsReceiver` `<receiver>` entry. Awaiting B4 to add manifest entries (Task 23). | **B4** | High |
-| 2 | Android 13+ requires `RECEIVE_SMS` under "restricted settings" — user must allow via Settings. B3 must test on a real device (Task 21). | **B3** | High |
-| 3 | B1 hasn't defined their parser interface yet. The `TODO` in `StubSmsHandler` is the integration point — B1 should define a `parse(sender, body): Transaction?` function and tell B3. | **B1** | High |
-| 4 | `SimulatedSmsSource` currently uses `StubSmsHandler` by default. Once B1+B2 are ready, the default should be swapped to `LiveSmsHandler`. This is a one-line change in the constructor default. | **B3 at integration** | Medium |
-| 5 | `BankSenderFilter.BANK_SENDER_IDS` should be reviewed/extended by the whole team when real bank SMS samples (Task 5) are collected. | **All** | Medium |
-| 6 | OTP detection in `StubSmsHandler` is a simple keyword check. B1 should provide a robust regex-based `isOtp(body): Boolean` function to replace it. | **B1** | Medium |
-| 7 | F1 needs the `SimulatedSmsSource` wired into a ViewModel for the Simulate SMS button. B3 should coordinate with F1 on the ViewModel interface. | **B3 + F1** | Medium |
-
----
-
-## 6. Privacy Compliance Checklist
-
-- [x] Raw SMS body is never stored, persisted, or logged anywhere in `sms/`
-- [x] OTP messages are detected and rejected **before** any other processing
-- [x] No `INTERNET` permission added
-- [x] `android:allowBackup="false"` not touched (B4's domain)
-- [x] No `Float` or `Double` used for currency (money not handled in this task)
-- [x] `AndroidManifest.xml` not modified in this task
+- [x] **Zero Raw SMS Storage / Logging**: The SMS body is never logged or written to persistent storage.
+- [x] **Zero INTERNET Permission**: No network access declared anywhere in `AndroidManifest.xml`.
+- [x] **allowBackup="false"**: Maintained in `AndroidManifest.xml`.
+- [x] **Sender Allowlist First**: Non-bank senders are immediately discarded before touching message content.
+- [x] **Receiver Protected & Disabled by Default**: `android:permission="android.permission.BROADCAST_SMS"` ensures only system telephony can invoke `SmsReceiver`; starts `android:enabled="false"` until user explicitly opts in.

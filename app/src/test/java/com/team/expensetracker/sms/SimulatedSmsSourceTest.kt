@@ -1,6 +1,7 @@
 package com.team.expensetracker.sms
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -18,6 +19,39 @@ import org.junit.Test
 class SimulatedSmsSourceTest {
 
     private val source = SimulatedSmsSource(StubSmsHandler())
+
+    @Test
+    fun `SmsPipeline default ingestor is not null`() {
+        assertNotNull(SmsPipeline.ingestor)
+        assertTrue(SmsPipeline.ingestor is StubSmsHandler)
+    }
+
+    @Test
+    fun `swapping in fake SmsIngestor makes SimulatedSmsSource call it`() {
+        val original = SmsPipeline.ingestor
+        var fakeCalledWithSender: String? = null
+        var fakeCalledWithBody: String? = null
+
+        val fakeIngestor = object : SmsIngestor {
+            override fun ingest(sender: String, body: String): SmsIngestionResult {
+                fakeCalledWithSender = sender
+                fakeCalledWithBody = body
+                return SmsIngestionResult.Accepted
+            }
+        }
+
+        try {
+            SmsPipeline.ingestor = fakeIngestor
+            val pipelineSource = SimulatedSmsSource() // uses SmsPipeline.ingestor by default
+            val result = pipelineSource.simulate("AX-AXISBK", "Dummy body")
+
+            assertEquals(SmsIngestionResult.Accepted, result)
+            assertEquals("AX-AXISBK", fakeCalledWithSender)
+            assertEquals("Dummy body", fakeCalledWithBody)
+        } finally {
+            SmsPipeline.ingestor = original
+        }
+    }
 
     @Test
     fun `non-bank sender is rejected before reaching handler`() {

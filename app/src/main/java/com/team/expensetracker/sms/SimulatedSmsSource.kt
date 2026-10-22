@@ -20,7 +20,7 @@ package com.team.expensetracker.sms
  *                the real handler that calls B1's parser and B2's repository.
  */
 class SimulatedSmsSource(
-    private val handler: SmsIngestor = StubSmsHandler()
+    private val handler: SmsIngestor? = null
 ) {
 
     /**
@@ -59,6 +59,7 @@ class SimulatedSmsSource(
      * @return       The [SmsIngestionResult] produced by the pipeline.
      */
     fun simulate(sender: String, body: String): SmsIngestionResult {
-        return handler.ingest(sender, body)
+        val activeIngestor = handler ?: SmsPipeline.ingestor
+        return activeIngestor.ingest(sender, body)
     }
 }
