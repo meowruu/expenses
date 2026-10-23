@@ -29,7 +29,11 @@ import com.team.expensetracker.ui.viewmodel.ManualEntryViewModel
 import com.team.expensetracker.ui.viewmodel.MyUpiIdsViewModel
 import com.team.expensetracker.ui.viewmodel.SettingsViewModel
 import com.team.expensetracker.ui.viewmodel.TransactionDetailViewModel
-
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import com.team.expensetracker.sms.AutoLoggingController
+import com.team.expensetracker.sms.simulateSmsAsync
+import com.team.expensetracker.sms.SimulatedSmsSource.SampleMessages
 /**
  * Root navigation host managing screen navigation across Home, Manual Entry,
  * Transaction Detail, Settings, My UPI IDs, and Permission Explainer.
@@ -44,6 +48,9 @@ fun AppNavHost(
 ) {
     val context = LocalContext.current
     val viewModelFactory = remember(context) { ExpenseViewModelFactory.create(context) }
+    // B3 SMS simulation and auto-logging controller
+    val coroutineScope = rememberCoroutineScope()
+    val autoLoggingController = remember { AutoLoggingController.create(context) }
 
     val homeViewModel: HomeViewModel = viewModel(factory = viewModelFactory)
     val manualEntryViewModel: ManualEntryViewModel = viewModel(factory = viewModelFactory)
@@ -66,9 +73,16 @@ fun AppNavHost(
         }.sortedByDescending { it.totalPaise }
     }
 
-    // Placeholder function for Simulate SMS
+    // B3 SMS simulation: inserts sample debit, credit, and OTP messages
     fun onSimulateSms() {
-        // TODO: B3 will wire the real pipeline
+        coroutineScope.launch {
+            // Debit transaction
+            simulateSmsAsync(context, SampleMessages.BODY_DEBIT, SampleMessages.SENDER_AXIS)
+            // Credit transaction
+            simulateSmsAsync(context, SampleMessages.BODY_CREDIT, SampleMessages.SENDER_HDFC)
+            // OTP (should be rejected)
+            simulateSmsAsync(context, SampleMessages.BODY_OTP, SampleMessages.SENDER_OTP)
+        }
     }
 
     NavHost(
@@ -210,8 +224,8 @@ fun AppNavHost(
         composable(route = Route.PermissionExplainer.route) {
             PermissionExplainerScreen(
                 onEnableAutoLogging = {
-                    // B3: Replace with real runtime SMS permission request.
-                    // Do NOT add permission logic here — B3 owns this.
+                    // Trigger permission flow via AutoLoggingController
+                    autoLoggingController.onEnableRequested()
                 },
                 onNotNow = {
                     navController.popBackStack()
