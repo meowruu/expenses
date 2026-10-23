@@ -1,64 +1,96 @@
-# B3 SMS Pipeline Handoff
+# B3 SMS Pipeline & Simulation Handoff
 
-**Role:** B3: SMS, Permissions and Integration  
-**Branch:** `b3-sms`  
-**Package:** `com.team.expensetracker.sms`  
-**Status:** ✅ `assembleDebug` + `testDebugUnitTest` both passing (37/37 tests)
-
----
-
-## 1. Files Added / Managed
-
-| File | Purpose |
-|---|---|
-| `app/src/main/java/com/team/expensetracker/sms/BankSenderFilter.kt` | Allowlist-based sender ID validator (strips operator prefixes, rejects phone numbers) |
-| `app/src/main/java/com/team/expensetracker/sms/SmsIngestor.kt` | `SmsIngestor` interface + `SmsIngestionResult` sealed class |
-| `app/src/main/java/com/team/expensetracker/sms/StubSmsHandler.kt` | **TEMP STUB** implementing `SmsIngestor`; logs event without logging body |
-| `app/src/main/java/com/team/expensetracker/sms/SmsPipeline.kt` | Global pipeline holder with `@Volatile var ingestor: SmsIngestor = StubSmsHandler()` |
-| `app/src/main/java/com/team/expensetracker/sms/SmsReceiver.kt` | System `BroadcastReceiver` joining multipart SMS in memory, checking `BankSenderFilter` first |
-| `app/src/main/java/com/team/expensetracker/sms/SmsReceiverToggle.kt` | Runtime toggling of `SmsReceiver` via `PackageManager.setComponentEnabledSetting` |
-| `app/src/main/java/com/team/expensetracker/sms/SimulatedSmsSource.kt` | Simulates SMS events through `SmsPipeline.ingestor` + sample messages |
-| `app/src/main/java/com/team/expensetracker/sms/AutoLoggingState.kt` | `AutoLoggingState` sealed class + `SmsPermissionChecker`, `ReceiverSwitch`, `AutoLoggingStore` interfaces |
-| `app/src/main/java/com/team/expensetracker/sms/AutoLoggingController.kt` | UI-free state machine for the privacy-first permission & auto-logging flow |
-| `app/src/main/java/com/team/expensetracker/sms/AndroidAutoLoggingAdapters.kt` | Framework adapters (`AndroidSmsPermissionChecker`, `AndroidReceiverSwitch`, `SharedPreferencesAutoLoggingStore`, factory) |
-| `app/src/main/java/com/team/expensetracker/sms/ExplainerText.kt` | User-facing privacy explainer copy constants (review requested from B4) |
-| `app/src/test/java/com/team/expensetracker/sms/BankSenderFilterTest.kt` | 19 unit tests for bank header matching and edge cases |
-| `app/src/test/java/com/team/expensetracker/sms/SimulatedSmsSourceTest.kt` | 7 unit tests for simulate flow, OTP rejection, and `SmsPipeline` swapping |
-| `app/src/test/java/com/team/expensetracker/sms/AutoLoggingControllerTest.kt` | 10 unit tests covering all state machine transitions and self-healing |
+**Role:** B3: SMS Receiver, Ingestion Pipeline & Permission Helper  
+**Target Git Branch:** `b3-sms`  
+**Base Package:** `com.team.expensetracker.sms`  
+**Verification:** ✅ `assembleDebug` + `testDebugUnitTest` passing (112/112 tests passed across the codebase, 42/42 in `sms`)
 
 ---
 
-## 2. Manifest Declarations (`app/src/main/AndroidManifest.xml`)
+## 1. Overview & Architectural Guarantees
 
-1. **Permission:**
-   ```xml
-   <uses-permission android:name="android.permission.RECEIVE_SMS" />
-   ```
-2. **Receiver Component:**
-   ```xml
-   <receiver
-       android:name=".sms.SmsReceiver"
-       android:enabled="false"
-       android:exported="true"
-       android:permission="android.permission.BROADCAST_SMS">
-       <intent-filter>
-           <action android:name="android.provider.Telephony.SMS_RECEIVED" />
-       </intent-filter>
-   </receiver>
-   ```
-3. **Hard Rules Maintained:**
-   - `android:allowBackup="false"` strictly enforced on `<application>`.
-   - **ZERO** `INTERNET` permission.
-   - The receiver is disabled by default (`android:enabled="false"`) until enabled at runtime via `SmsReceiverToggle` upon explicit user consent.
+B3 delivers the complete live SMS reception pipeline, the simulated SMS pipeline, and the privacy-first permission state machine for the SpendLog application.
+
+### Strict Privacy & Security Invariants
+1. **Zero Raw SMS Retention:** Under NO circumstances is raw SMS body text stored in the database, logged via `Log.*` / `println`, or included in domain models.
+2. **Pre-Parsing OTP Rejection:** All OTP / authentication messages are rejected *prior* to amount extraction and never saved.
+3. **Zero INTERNET Permission:** The app has zero network access. No internet permission is declared in `AndroidManifest.xml`.
+4. **Integer Currency Arithmetic (`amountPaise: Long`):** Currency is strictly handled in paise (`1 INR = 100 paise`) using `Long`.
+5. **Bank Sender Filtering FIRST:** Messages from non-bank senders (personal numbers, marketing) are immediately discarded without processing.
 
 ---
 
-## 3. Exact Public Signatures
+## 2. Public API Specifications for F1 (Frontend)
 
-### `AutoLoggingState` (sealed class) & Core Interfaces
+### 2.1 `simulateSms` (Simulated Ingestion Pipeline)
+
+Located in `com.team.expensetracker.sms.SimulateSms.kt`:
 
 ```kotlin
 package com.team.expensetracker.sms
+
+import android.content.Context
+
+/**
+ * Simulates incoming bank SMS processing without cellular connectivity.
+ * Runs the exact same end-to-end pipeline:
+ *  1. Bank sender ID validation ([BankSenderFilter])
+ *  2. B1 SMS parsing & pre-parsing OTP rejection ([BankSmsParser])
+ *  3. Payee rule lookup & transaction categorisation ([DefaultTransactionCategorizer])
+ *  4. Room database insertion via [TransactionRepository] (deduplicating on refNumber)
+ *
+ * @param context Android Context used to access [DataLayerContainer].
+ * @param fakeText The simulated bank SMS text.
+ * @param sender Optional bank sender header (e.g. "AXISBK", "HDFCBK", "SBIINB").
+ *               If omitted, automatically detected from text keywords or defaults to "AXISBK".
+ * @return true if successfully parsed and inserted into Room; false if rejected, ignored, or duplicate.
+ */
+fun simulateSms(
+    context: Context,
+    fakeText: String,
+    sender: String = detectOrFallbackBankSender(fakeText)
+): Boolean
+
+/**
+ * Suspending variant of [simulateSms] for use within a CoroutineScope / ViewModel.
+ */
+suspend fun simulateSmsAsync(
+    context: Context,
+    fakeText: String,
+    sender: String = detectOrFallbackBankSender(fakeText)
+): Boolean
+```
+
+#### How F1 wires the "Simulate SMS" Dialog / Button:
+```kotlin
+// In HomeScreen.kt or AppNavHost.kt when user submits a test SMS:
+val context = LocalContext.current
+val coroutineScope = rememberCoroutineScope()
+
+SimulateSmsDialog(
+    onDismiss = { showDialog = false },
+    onSend = { smsText ->
+        coroutineScope.launch(Dispatchers.IO) {
+            val inserted = simulateSmsAsync(context, smsText)
+            // inserted == true -> Entry added to Room; reactive dashboard updates automatically!
+            // inserted == false -> Message was duplicate, OTP, or non-transaction.
+        }
+        showDialog = false
+    }
+)
+```
+
+---
+
+### 2.2 Permission Helper (`AutoLoggingController` & `AutoLoggingState`)
+
+Located in `com.team.expensetracker.sms.AutoLoggingController.kt` and `AutoLoggingState.kt`:
+
+```kotlin
+package com.team.expensetracker.sms
+
+import android.content.Context
+import kotlinx.coroutines.flow.StateFlow
 
 sealed class AutoLoggingState {
     object Off : AutoLoggingState()
@@ -67,27 +99,6 @@ sealed class AutoLoggingState {
     object PermissionDenied : AutoLoggingState()
     object On : AutoLoggingState()
 }
-
-interface SmsPermissionChecker {
-    fun isGranted(): Boolean
-}
-
-interface ReceiverSwitch {
-    fun setEnabled(enabled: Boolean)
-}
-
-interface AutoLoggingStore {
-    var isEnabled: Boolean
-}
-```
-
-### `AutoLoggingController` (class)
-
-```kotlin
-package com.team.expensetracker.sms
-
-import android.content.Context
-import kotlinx.coroutines.flow.StateFlow
 
 class AutoLoggingController(
     permissionChecker: SmsPermissionChecker,
@@ -111,125 +122,28 @@ class AutoLoggingController(
 fun createAutoLoggingController(context: Context): AutoLoggingController
 ```
 
-### Android Adapters (`AndroidAutoLoggingAdapters.kt`)
-
+#### How F1 wires Auto-Logging & Privacy Explainer in Compose:
 ```kotlin
-package com.team.expensetracker.sms
-
-import android.content.Context
-
-class AndroidSmsPermissionChecker(context: Context) : SmsPermissionChecker
-class AndroidReceiverSwitch(context: Context) : ReceiverSwitch
-class SharedPreferencesAutoLoggingStore(context: Context, prefsName: String = ...) : AutoLoggingStore
-```
-
-### `ExplainerText` (object)
-
-```kotlin
-package com.team.expensetracker.sms
-
-object ExplainerText {
-    const val TITLE: String
-    const val WHICH_SMS_ARE_READ: String
-    const val WHAT_IS_EXTRACTED: String
-    const val WHAT_IS_NOT_KEPT: String
-    const val NOTHING_LEAVES_PHONE: String
-    const val BUTTON_ACCEPT: String
-    const val BUTTON_DISMISS: String
-}
-```
-
-### `BankSenderFilter` (object)
-
-```kotlin
-package com.team.expensetracker.sms
-
-object BankSenderFilter {
-    val BANK_SENDER_IDS: Set<String>
-    fun isBankSender(senderId: String): Boolean
-}
-```
-
-### `SmsPipeline` (object) & `SmsIngestor`
-
-```kotlin
-package com.team.expensetracker.sms
-
-object SmsPipeline {
-    @Volatile
-    var ingestor: SmsIngestor = StubSmsHandler()
-}
-
-sealed class SmsIngestionResult {
-    object Accepted : SmsIngestionResult()
-    data class RejectedSender(val sender: String) : SmsIngestionResult()
-    object Ignored : SmsIngestionResult()
-}
-
-interface SmsIngestor {
-    fun ingest(sender: String, body: String): SmsIngestionResult
-}
-```
-
-### `SmsReceiverToggle` (object) & `SimulatedSmsSource` (class)
-
-```kotlin
-package com.team.expensetracker.sms
-
-import android.content.Context
-
-object SmsReceiverToggle {
-    fun setEnabled(context: Context, enabled: Boolean)
-    fun isEnabled(context: Context): Boolean
-}
-
-class SimulatedSmsSource(
-    handler: SmsIngestor? = null
-) {
-    fun simulate(sender: String, body: String): SmsIngestionResult
-
-    object SampleMessages {
-        const val SENDER_AXIS: String
-        const val BODY_DEBIT: String
-        const val SENDER_HDFC: String
-        const val BODY_CREDIT: String
-        const val SENDER_OTP: String
-        const val BODY_OTP: String
-    }
-}
-```
-
----
-
-## 4. How F1 Uses This in Jetpack Compose
-
-F1 can easily integrate the full privacy-first permission flow into the UI:
-
-### 1. Initialize the Controller
-```kotlin
-// Inside ViewModel or remembered in Composable:
+// 1. Instantiate the controller (in ViewModel or remembered in Composable):
+val context = LocalContext.current
 val controller = remember { AutoLoggingController.create(context) }
 val autoLoggingState by controller.state.collectAsState()
-```
 
-### 2. Handle System Permission Launcher
-```kotlin
+// 2. Set up the Android system permission request launcher:
 val permissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestPermission()
 ) { isGranted ->
     controller.onPermissionResult(isGranted)
 }
 
-// When state transitions to RequestingPermission, trigger system popup:
+// 3. React to state changes:
 LaunchedEffect(autoLoggingState) {
     if (autoLoggingState is AutoLoggingState.RequestingPermission) {
         permissionLauncher.launch(android.Manifest.permission.RECEIVE_SMS)
     }
 }
-```
 
-### 3. Show Explainer Dialog (Privacy-First Flow)
-```kotlin
+// 4. Privacy Explainer Dialog:
 if (autoLoggingState is AutoLoggingState.ShowingExplainer) {
     AlertDialog(
         onDismissRequest = { controller.onExplainerDismissed() },
@@ -254,25 +168,20 @@ if (autoLoggingState is AutoLoggingState.ShowingExplainer) {
         }
     )
 }
-```
 
-### 4. Toggle Switch Binding
-```kotlin
+// 5. Settings Screen Toggle Switch:
 Switch(
     checked = autoLoggingState is AutoLoggingState.On,
-    onCheckedChange = { checked ->
-        if (checked) {
+    onCheckedChange = { isChecked ->
+        if (isChecked) {
             controller.onEnableRequested()
         } else {
             controller.disable()
         }
     }
 )
-```
 
-### 5. Resyncing on Resume
-```kotlin
-// In MainActivity or screen lifecycle observer:
+// 6. Lifecycle Sync in onResume:
 LifecycleResumeEffect(Unit) {
     controller.refresh()
     onPauseOrDispose { }
@@ -281,25 +190,65 @@ LifecycleResumeEffect(Unit) {
 
 ---
 
-## 5. Android 13+ Note: "Allow Restricted Settings" for Sideloaded Installs
+## 3. Live BroadcastReceiver & Manifest Declarations
 
-> [!IMPORTANT]
-> **Android 13+ Sideloading Quirk:**
-> When the app APK is sideloaded (e.g. via `adb install` or downloaded APK during a hackathon demo), Android 13+ marks sensitive permissions (`RECEIVE_SMS`) as **"Restricted settings"**.
-> If the permission popup does not appear or appears greyed out / denied on a real device:
-> 1. Long-press the App icon on the home screen -> tap **App info** (or go to **Settings -> Apps -> SpendLog**).
-> 2. Tap the **three vertical dots** (⋮) in the top-right corner.
-> 3. Tap **"Allow restricted settings"** and authenticate with device PIN/fingerprint.
-> 4. Return to the app and toggle Auto-logging on again.
->
-> *(Note: Do NOT build UI for this; keep this as an operational reminder for the golden demo device).*
+- **Receiver:** `com.team.expensetracker.sms.SmsReceiver`
+- **Dynamic Toggle:** `com.team.expensetracker.sms.SmsReceiverToggle`
+
+### Manifest Configuration (`AndroidManifest.xml`)
+```xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+
+    <application
+        android:allowBackup="false" ...>
+
+        <receiver
+            android:name=".sms.SmsReceiver"
+            android:enabled="false"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
+```
+
+- Protected by `android.permission.BROADCAST_SMS` so only system telephony can invoke it.
+- Initial state is disabled (`android:enabled="false"`).
+- Enabled dynamically at runtime solely upon explicit user consent via `SmsReceiverToggle.setEnabled(context, true)`.
 
 ---
 
-## 6. How B1 and B2 Plug In
+## 4. Android 13+ Note: "Allow Restricted Settings" for Sideloaded APKs
 
-Replace `StubSmsHandler` in one step at application init:
-```kotlin
-SmsPipeline.ingestor = ProductionSmsIngestor(b1Parser, b2TransactionRepository)
-```
-Both live system SMS via `SmsReceiver` and fake SMS via `SimulatedSmsSource` immediately route through the production parser and Room database.
+> [!IMPORTANT]
+> When testing on a real device with Android 13+ via sideloaded APK (`adb install`):
+> Android security policy marks `RECEIVE_SMS` as **"Restricted settings"**.
+> If the permission dialog does not appear or says permission is restricted:
+> 1. Open device **Settings -> Apps -> SpendLog**.
+> 2. Tap the **three dots menu (⋮)** in the top right corner.
+> 3. Select **"Allow restricted settings"** and authenticate with device PIN.
+> 4. Return to SpendLog and enable Auto-logging.
+
+---
+
+## 5. Summary of Files in `com.team.expensetracker.sms`
+
+| File | Purpose |
+|---|---|
+| `BankSenderFilter.kt` | Validates 6-letter bank headers (AXISBK, HDFCBK, SBIINB, etc.) and strips operator prefixes |
+| `SmsProcessingPipeline.kt` | End-to-end pipeline: sender filter -> B1 parser -> categorizer -> B2 Room repository |
+| `SimulateSms.kt` | `simulateSms(context, fakeText)` function for non-cellular testing & UI button |
+| `SmsReceiver.kt` | System `BroadcastReceiver` joining multipart SMS and running the pipeline in background |
+| `SmsReceiverToggle.kt` | Runtime enabling/disabling of `SmsReceiver` via `PackageManager` |
+| `AutoLoggingState.kt` | Permission lifecycle state machine and decoupled interface abstractions |
+| `AutoLoggingController.kt` | StateFlow controller managing explainer -> permission -> active state |
+| `AndroidAutoLoggingAdapters.kt` | Framework implementations (`ContextCompat`, `SharedPreferences`) and factory |
+| `ExplainerText.kt` | User-facing copy constants for privacy explainer dialog |
+| `SimulatedSmsSource.kt` | Simulated SMS event holder with sample bank SMS messages |
+| `StubSmsHandler.kt` | Safe stub implementation of `SmsIngestor` |
+| `SmsPipeline.kt` | Global pipeline holder |
