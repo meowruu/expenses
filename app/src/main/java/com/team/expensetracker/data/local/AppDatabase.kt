@@ -5,21 +5,25 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
 import com.team.expensetracker.data.local.converter.Converters
 import com.team.expensetracker.data.local.dao.MyUpiIdDao
 import com.team.expensetracker.data.local.dao.PayeeRuleDao
+import com.team.expensetracker.data.local.dao.SplitShareDao
 import com.team.expensetracker.data.local.dao.TransactionDao
 import com.team.expensetracker.data.local.entity.MyUpiIdEntity
 import com.team.expensetracker.data.local.entity.PayeeRuleEntity
+import com.team.expensetracker.data.local.entity.SplitShareEntity
 import com.team.expensetracker.data.local.entity.TransactionEntity
 
 /**
  * Main Room database for the expense tracker application.
  *
  * Privacy Invariant:
- * Strictly stores structured transaction metadata, payee category rules, and user-owned UPI IDs.
- * Does NOT contain any raw SMS message body or sensitive unparsed strings.
+ * Strictly stores structured transaction metadata, payee category rules, user-owned UPI IDs,
+ * and local split shares. Does NOT contain any raw SMS message body or sensitive unparsed strings.
  *
  * Encryption Integration (Task 25):
  * Prepared for B4's SQLCipher database encryption. Callers may supply an optional
@@ -30,9 +34,10 @@ import com.team.expensetracker.data.local.entity.TransactionEntity
     entities = [
         TransactionEntity::class,
         PayeeRuleEntity::class,
-        MyUpiIdEntity::class
+        MyUpiIdEntity::class,
+        SplitShareEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -41,9 +46,35 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun transactionDao(): TransactionDao
     abstract fun payeeRuleDao(): PayeeRuleDao
     abstract fun myUpiIdDao(): MyUpiIdDao
+    abstract fun splitShareDao(): SplitShareDao
 
     companion object {
         const val DATABASE_NAME = "expense_tracker.db"
+
+        /**
+         * Migration from version 1 to 2:
+         * Adds the `split_shares` table and associated indices for the local split expense feature.
+         * Existing data in `transactions`, `payee_rules`, and `my_upi_ids` is completely preserved.
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `split_shares` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `transactionId` INTEGER NOT NULL,
+                        `personName` TEXT NOT NULL,
+                        `sharePaise` INTEGER NOT NULL,
+                        `settled` INTEGER NOT NULL,
+                        FOREIGN KEY(`transactionId`) REFERENCES `transactions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_shares_transactionId` ON `split_shares` (`transactionId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_shares_personName` ON `split_shares` (`personName`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_split_shares_settled` ON `split_shares` (`settled`)")
+            }
+        }
 
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -68,7 +99,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * Internal builder for database creation.
-         * Destructive migration is deliberately NOT enabled to prevent accidental data loss.
+         * Registers [MIGRATION_1_2] so existing data is preserved across schema upgrades.
+         * Destructive migration is deliberately NOT enabled.
          */
         private fun buildDatabase(
             context: Context,
@@ -78,7 +110,7 @@ abstract class AppDatabase : RoomDatabase() {
                 context,
                 AppDatabase::class.java,
                 DATABASE_NAME
-            )
+            ).addMigrations(MIGRATION_1_2)
 
             if (openHelperFactory != null) {
                 builder.openHelperFactory(openHelperFactory)

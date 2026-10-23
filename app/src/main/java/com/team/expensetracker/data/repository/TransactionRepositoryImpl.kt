@@ -2,6 +2,7 @@ package com.team.expensetracker.data.repository
 
 import com.team.expensetracker.data.local.dao.MyUpiIdDao
 import com.team.expensetracker.data.local.dao.PayeeRuleDao
+import com.team.expensetracker.data.local.dao.SplitShareDao
 import com.team.expensetracker.data.local.dao.TransactionDao
 import com.team.expensetracker.data.local.entity.toDomain
 import com.team.expensetracker.data.local.entity.toEntity
@@ -22,7 +23,8 @@ import kotlinx.coroutines.flow.map
 class TransactionRepositoryImpl(
     private val dao: TransactionDao,
     private val payeeRuleDao: PayeeRuleDao? = null,
-    private val myUpiIdDao: MyUpiIdDao? = null
+    private val myUpiIdDao: MyUpiIdDao? = null,
+    private val splitShareDao: SplitShareDao? = null
 ) : TransactionRepository {
 
     override suspend fun insert(tx: Transaction): Boolean {
@@ -65,5 +67,6 @@ class TransactionRepositoryImpl(
         dao.deleteAll()
         payeeRuleDao?.deleteAll()
         myUpiIdDao?.deleteAll()
+        splitShareDao?.deleteAll()
     }
 }
