@@ -2,9 +2,11 @@ package com.team.expensetracker.ui.viewmodel
 
 import com.team.expensetracker.data.fake.FakeMyUpiIdDao
 import com.team.expensetracker.data.fake.FakePayeeRuleDao
+import com.team.expensetracker.data.fake.FakeSplitShareDao
 import com.team.expensetracker.data.fake.FakeTransactionDao
 import com.team.expensetracker.data.local.entity.MyUpiIdEntity
 import com.team.expensetracker.data.local.entity.PayeeRuleEntity
+import com.team.expensetracker.data.local.entity.SplitShareEntity
 import com.team.expensetracker.data.model.Transaction
 import com.team.expensetracker.data.model.TransactionType
 import com.team.expensetracker.data.repository.TransactionRepositoryImpl
@@ -23,7 +25,7 @@ import org.junit.Before
 import org.junit.Test
 
 /**
- * Unit tests verifying [SettingsViewModel] data wipe behavior across all three tables.
+ * Unit tests verifying [SettingsViewModel] data wipe behavior across all tables.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
@@ -31,6 +33,7 @@ class SettingsViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var fakeMyUpiIdDao: FakeMyUpiIdDao
     private lateinit var fakePayeeRuleDao: FakePayeeRuleDao
+    private lateinit var fakeSplitShareDao: FakeSplitShareDao
     private lateinit var fakeTransactionDao: FakeTransactionDao
     private lateinit var repository: TransactionRepositoryImpl
     private lateinit var viewModel: SettingsViewModel
@@ -40,16 +43,19 @@ class SettingsViewModelTest {
         Dispatchers.setMain(testDispatcher)
         fakeMyUpiIdDao = FakeMyUpiIdDao()
         fakePayeeRuleDao = FakePayeeRuleDao()
+        fakeSplitShareDao = FakeSplitShareDao()
         fakeTransactionDao = FakeTransactionDao(fakeMyUpiIdDao)
         repository = TransactionRepositoryImpl(
             dao = fakeTransactionDao,
             payeeRuleDao = fakePayeeRuleDao,
-            myUpiIdDao = fakeMyUpiIdDao
+            myUpiIdDao = fakeMyUpiIdDao,
+            splitShareDao = fakeSplitShareDao
         )
         viewModel = SettingsViewModel(
             transactionRepository = repository,
             payeeRuleDao = fakePayeeRuleDao,
-            myUpiIdDao = fakeMyUpiIdDao
+            myUpiIdDao = fakeMyUpiIdDao,
+            splitShareDao = fakeSplitShareDao
         )
     }
 
@@ -59,7 +65,7 @@ class SettingsViewModelTest {
     }
 
     @Test
-    fun testDeleteAllDataClearsAllThreeTablesAndSummariesResetToZero() = runTest {
+    fun testDeleteAllDataClearsAllFourTablesAndSummariesResetToZero() = runTest {
         val now = System.currentTimeMillis()
 
         // 1. Insert transaction
@@ -83,10 +89,21 @@ class SettingsViewModelTest {
         // 3. Insert own UPI ID
         fakeMyUpiIdDao.add(MyUpiIdEntity(upiId = "self@okhdfcbank"))
 
+        // 4. Insert split share
+        fakeSplitShareDao.insertShare(
+            SplitShareEntity(
+                transactionId = 1L,
+                personName = "Bob",
+                sharePaise = 16000L,
+                settled = false
+            )
+        )
+
         // Verify pre-wipe state
         assertEquals(1, repository.observeAll().first().size)
         assertEquals(1, fakePayeeRuleDao.items.value.size)
         assertEquals(1, fakeMyUpiIdDao.items.value.size)
+        assertEquals(1, fakeSplitShareDao.shares.value.size)
 
         var callbackInvoked = false
         viewModel.deleteAllData {
@@ -100,10 +117,11 @@ class SettingsViewModelTest {
         assertTrue("wipeCompleted StateFlow should be true", viewModel.wipeCompleted.value)
         assertFalse("isWiping StateFlow should be false after completion", viewModel.isWiping.value)
 
-        // Confirm all three tables are completely empty
+        // Confirm all tables are completely empty
         assertEquals("Transactions table must be empty", 0, repository.observeAll().first().size)
         assertEquals("Payee rules table must be empty", 0, fakePayeeRuleDao.items.value.size)
         assertEquals("My UPI IDs table must be empty", 0, fakeMyUpiIdDao.items.value.size)
+        assertEquals("Split shares table must be empty", 0, fakeSplitShareDao.shares.value.size)
 
         // Confirm Flow-based summaries go back to 0
         val monthTotal = repository.observeMonthTotal(0L, Long.MAX_VALUE).first()

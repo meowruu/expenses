@@ -174,3 +174,76 @@ class FakeTransactionDao(
         return count
     }
 }
+
+/**
+ * In-memory test double for [com.team.expensetracker.data.local.dao.SplitShareDao].
+ */
+class FakeSplitShareDao : com.team.expensetracker.data.local.dao.SplitShareDao {
+    private val idCounter = AtomicLong(1L)
+    val shares = MutableStateFlow<List<com.team.expensetracker.data.local.entity.SplitShareEntity>>(emptyList())
+
+    override suspend fun insertShares(shares: List<com.team.expensetracker.data.local.entity.SplitShareEntity>): List<Long> {
+        val current = this.shares.value.toMutableList()
+        val ids = mutableListOf<Long>()
+        for (share in shares) {
+            val assignedId = if (share.id == 0L) idCounter.getAndIncrement() else share.id
+            val newEntity = share.copy(id = assignedId)
+            current.add(newEntity)
+            ids.add(assignedId)
+        }
+        this.shares.value = current
+        return ids
+    }
+
+    override suspend fun insertShare(share: com.team.expensetracker.data.local.entity.SplitShareEntity): Long {
+        return insertShares(listOf(share)).first()
+    }
+
+    override fun observeSharesByTransaction(transactionId: Long): Flow<List<com.team.expensetracker.data.local.entity.SplitShareEntity>> {
+        return shares.map { list -> list.filter { it.transactionId == transactionId }.sortedBy { it.id } }
+    }
+
+    override suspend fun getSharesByTransaction(transactionId: Long): List<com.team.expensetracker.data.local.entity.SplitShareEntity> {
+        return shares.value.filter { it.transactionId == transactionId }.sortedBy { it.id }
+    }
+
+    override fun observeTotalsOwedPerPerson(): Flow<List<com.team.expensetracker.data.local.model.PersonOwedShare>> {
+        return shares.map { list ->
+            list.filter { !it.settled }
+                .groupBy { it.personName }
+                .map { (name, personShares) ->
+                    com.team.expensetracker.data.local.model.PersonOwedShare(
+                        personName = name,
+                        totalOwedPaise = personShares.sumOf { it.sharePaise }
+                    )
+                }
+                .sortedByDescending { it.totalOwedPaise }
+        }
+    }
+
+    override suspend fun markSettled(id: Long, settled: Boolean): Int {
+        val current = shares.value.toMutableList()
+        val index = current.indexOfFirst { it.id == id }
+        if (index >= 0) {
+            current[index] = current[index].copy(settled = settled)
+            shares.value = current
+            return 1
+        }
+        return 0
+    }
+
+    override suspend fun deleteByTransaction(transactionId: Long): Int {
+        val current = shares.value.toMutableList()
+        val before = current.size
+        current.removeAll { it.transactionId == transactionId }
+        val count = before - current.size
+        shares.value = current
+        return count
+    }
+
+    override suspend fun deleteAll(): Int {
+        val count = shares.value.size
+        shares.value = emptyList()
+        return count
+    }
+}

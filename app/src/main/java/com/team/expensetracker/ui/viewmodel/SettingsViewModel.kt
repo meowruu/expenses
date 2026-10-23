@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.team.expensetracker.data.local.dao.MyUpiIdDao
 import com.team.expensetracker.data.local.dao.PayeeRuleDao
+import com.team.expensetracker.data.local.dao.SplitShareDao
 import com.team.expensetracker.data.repository.TransactionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -19,7 +20,8 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     private val transactionRepository: TransactionRepository,
     private val payeeRuleDao: PayeeRuleDao? = null,
-    private val myUpiIdDao: MyUpiIdDao? = null
+    private val myUpiIdDao: MyUpiIdDao? = null,
+    private val splitShareDao: SplitShareDao? = null
 ) : ViewModel() {
 
     private val _isWiping = MutableStateFlow(false)
@@ -46,6 +48,7 @@ class SettingsViewModel(
                 transactionRepository.deleteAll()
                 payeeRuleDao?.deleteAll()
                 myUpiIdDao?.deleteAll()
+                splitShareDao?.deleteAll()
                 _wipeCompleted.value = true
                 onComplete()
             } catch (e: Exception) {

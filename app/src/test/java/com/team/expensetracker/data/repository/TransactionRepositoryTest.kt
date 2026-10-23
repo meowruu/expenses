@@ -2,6 +2,7 @@ package com.team.expensetracker.data.repository
 
 import com.team.expensetracker.data.fake.FakeMyUpiIdDao
 import com.team.expensetracker.data.fake.FakePayeeRuleDao
+import com.team.expensetracker.data.fake.FakeSplitShareDao
 import com.team.expensetracker.data.fake.FakeTransactionDao
 import com.team.expensetracker.data.local.entity.MyUpiIdEntity
 import com.team.expensetracker.data.local.entity.PayeeRuleEntity
@@ -22,6 +23,7 @@ class TransactionRepositoryTest {
 
     private lateinit var fakeMyUpiIdDao: FakeMyUpiIdDao
     private lateinit var fakePayeeRuleDao: FakePayeeRuleDao
+    private lateinit var fakeSplitShareDao: FakeSplitShareDao
     private lateinit var fakeTransactionDao: FakeTransactionDao
     private lateinit var repository: TransactionRepository
 
@@ -29,11 +31,13 @@ class TransactionRepositoryTest {
     fun setUp() {
         fakeMyUpiIdDao = FakeMyUpiIdDao()
         fakePayeeRuleDao = FakePayeeRuleDao()
+        fakeSplitShareDao = FakeSplitShareDao()
         fakeTransactionDao = FakeTransactionDao(fakeMyUpiIdDao)
         repository = TransactionRepositoryImpl(
             dao = fakeTransactionDao,
             payeeRuleDao = fakePayeeRuleDao,
-            myUpiIdDao = fakeMyUpiIdDao
+            myUpiIdDao = fakeMyUpiIdDao,
+            splitShareDao = fakeSplitShareDao
         )
     }
 
@@ -550,20 +554,32 @@ class TransactionRepositoryTest {
         // Populate table 3: my_upi_ids
         fakeMyUpiIdDao.add(MyUpiIdEntity(upiId = "user@okhdfcbank"))
 
+        // Populate table 4: split_shares
+        fakeSplitShareDao.insertShare(
+            com.team.expensetracker.data.local.entity.SplitShareEntity(
+                transactionId = 1L,
+                personName = "Alice",
+                sharePaise = 10000L,
+                settled = false
+            )
+        )
+
         // Verify data exists
         assertEquals(1, repository.observeAll().first().size)
         assertEquals(1, fakePayeeRuleDao.items.value.size)
         assertEquals(1, fakeMyUpiIdDao.items.value.size)
+        assertEquals(1, fakeSplitShareDao.shares.value.size)
         assertEquals(25000L, repository.observeMonthTotal(windowStart, windowEnd).first())
         assertEquals(1, repository.observeCategorySummary(windowStart, windowEnd).first().size)
 
         // Execute wipe
         repository.deleteAll()
 
-        // Confirm all 3 tables are empty
+        // Confirm all tables are empty
         assertEquals(0, repository.observeAll().first().size)
         assertEquals(0, fakePayeeRuleDao.items.value.size)
         assertEquals(0, fakeMyUpiIdDao.items.value.size)
+        assertEquals(0, fakeSplitShareDao.shares.value.size)
 
         // Confirm Flow-based summaries go back to 0 and empty
         val totalAfterWipe = repository.observeMonthTotal(windowStart, windowEnd).first()

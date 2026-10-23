@@ -34,8 +34,12 @@ class ExpenseViewModelFactory(
                 SettingsViewModel(
                     transactionRepository = container.transactionRepository,
                     payeeRuleDao = container.database.payeeRuleDao(),
-                    myUpiIdDao = container.database.myUpiIdDao()
+                    myUpiIdDao = container.database.myUpiIdDao(),
+                    splitShareDao = container.database.splitShareDao()
                 ) as T
+            }
+            modelClass.isAssignableFrom(SplitViewModel::class.java) -> {
+                SplitViewModel(container.splitRepository) as T
             }
             modelClass.isAssignableFrom(ExpenseViewModel::class.java) -> {
                 ExpenseViewModel(

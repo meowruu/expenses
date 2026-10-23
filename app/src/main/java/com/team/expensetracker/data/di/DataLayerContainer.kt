@@ -7,6 +7,8 @@ import com.team.expensetracker.data.repository.MyUpiIdRepository
 import com.team.expensetracker.data.repository.MyUpiIdRepositoryImpl
 import com.team.expensetracker.data.repository.PayeeRuleRepository
 import com.team.expensetracker.data.repository.PayeeRuleRepositoryImpl
+import com.team.expensetracker.data.repository.SplitRepository
+import com.team.expensetracker.data.repository.SplitRepositoryImpl
 import com.team.expensetracker.data.repository.TransactionRepository
 import com.team.expensetracker.data.repository.TransactionRepositoryImpl
 
@@ -26,7 +28,10 @@ class DataLayerContainer(
     )
 
     val transactionRepository: TransactionRepository = TransactionRepositoryImpl(
-        dao = database.transactionDao()
+        dao = database.transactionDao(),
+        payeeRuleDao = database.payeeRuleDao(),
+        myUpiIdDao = database.myUpiIdDao(),
+        splitShareDao = database.splitShareDao()
     )
 
     val payeeRuleRepository: PayeeRuleRepository = PayeeRuleRepositoryImpl(
@@ -35,6 +40,10 @@ class DataLayerContainer(
 
     val myUpiIdRepository: MyUpiIdRepository = MyUpiIdRepositoryImpl(
         dao = database.myUpiIdDao()
+    )
+
+    val splitRepository: SplitRepository = SplitRepositoryImpl(
+        dao = database.splitShareDao()
     )
 
     companion object {
